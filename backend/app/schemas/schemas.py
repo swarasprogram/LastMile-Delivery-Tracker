@@ -99,3 +99,36 @@ class RateCardOut(BaseModel):
 
     class Config:
         from_attributes = True
+    
+# ── Orders ────────────────────────────────────────
+class OrderEstimateRequest(BaseModel):
+    pickup_address: str
+    pickup_lat: Optional[float] = None
+    pickup_lng: Optional[float] = None
+    drop_address: str
+    drop_lat: Optional[float] = None
+    drop_lng: Optional[float] = None
+    length_cm: float
+    breadth_cm: float
+    height_cm: float
+    actual_weight_kg: float
+    order_type: str   # B2B or B2C
+    payment_type: str # Prepaid or COD
+
+
+class OrderEstimateResponse(BaseModel):
+    pickup_zone_id: str
+    drop_zone_id: str
+    pickup_lat: Optional[float]
+    pickup_lng: Optional[float]
+    drop_lat: Optional[float]
+    drop_lng: Optional[float]
+    actual_weight_kg: float
+    volumetric_weight_kg: float
+    billed_weight_kg: float
+    base_charge: float
+    cod_surcharge: float
+    total_charge: float
+    rate_card_id: str
+    origin_zone_id: str
+    dest_zone_id: str
