@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, date
 
 
 # ── Auth ──────────────────────────────────────────
@@ -117,18 +117,116 @@ class OrderEstimateRequest(BaseModel):
 
 
 class OrderEstimateResponse(BaseModel):
-    pickup_zone_id: str
-    drop_zone_id: str
+    pickup_zone_id: UUID
+    drop_zone_id: UUID
     pickup_lat: Optional[float]
     pickup_lng: Optional[float]
     drop_lat: Optional[float]
     drop_lng: Optional[float]
-    actual_weight_kg: float
     volumetric_weight_kg: float
     billed_weight_kg: float
     base_charge: float
+    distance_km: float = 0
+    distance_charge: float = 0
     cod_surcharge: float
     total_charge: float
-    rate_card_id: str
-    origin_zone_id: str
-    dest_zone_id: str
+    
+
+
+from datetime import date
+
+# ── Order Create / Response ───────────────────────
+class OrderCreateRequest(BaseModel):
+    pickup_address: str
+    pickup_lat: Optional[float] = None
+    pickup_lng: Optional[float] = None
+    drop_address: str
+    drop_lat: Optional[float] = None
+    drop_lng: Optional[float] = None
+    length_cm: float
+    breadth_cm: float
+    height_cm: float
+    actual_weight_kg: float
+    order_type: str    # B2B or B2C
+    payment_type: str  # Prepaid or COD
+
+
+class TrackingEventOut(BaseModel):
+    id: UUID
+    status: str
+    actor_role: str
+    note: Optional[str]
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class OrderOut(BaseModel):
+    id: UUID
+    customer_id: UUID
+    agent_id: Optional[UUID]
+    pickup_address: str
+    drop_address: str
+    pickup_lat: Optional[float] = None
+    pickup_lng: Optional[float] = None
+    drop_lat: Optional[float] = None
+    drop_lng: Optional[float] = None
+    pickup_zone_id: Optional[UUID]
+    drop_zone_id: Optional[UUID]
+    order_type: str
+    payment_type: str
+    actual_weight_kg: Optional[float]
+    volumetric_weight_kg: Optional[float]
+    billed_weight_kg: Optional[float]
+    base_charge: Optional[float]
+    cod_surcharge: Optional[float]
+    total_charge: Optional[float]
+    status: str
+    scheduled_date: Optional[date]
+    created_at: Optional[datetime]
+    tracking_events: list[TrackingEventOut] = []
+    distance_km: Optional[float] = 0
+    distance_charge: Optional[float] = 0
+
+    class Config:
+        from_attributes = True
+
+
+class StatusUpdateRequest(BaseModel):
+    status: str
+    note: Optional[str] = None
+
+
+class RescheduleRequest(BaseModel):
+    scheduled_date: date
+
+
+# ── Agent ─────────────────────────────────────────
+class AgentLocationUpdate(BaseModel):
+    current_lat: float
+    current_lng: float
+    is_available: Optional[bool] = None
+
+
+class AgentProfileOut(BaseModel):
+    user_id: UUID
+    current_lat: Optional[float]
+    current_lng: Optional[float]
+    is_available: bool
+    vehicle_type: Optional[str]=None
+    total_deliveries: Optional[int]=0
+    successful_deliveries: Optional[int]=0
+
+    class Config:
+        from_attributes = True
+
+
+class AssignmentResult(BaseModel):
+    order_id: UUID
+    assigned_agent_id: UUID
+    agent_name: str
+    distance_km: float
+    active_orders: int
+    success_rate: float
+    composite_score: float
