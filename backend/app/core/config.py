@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     BREVO_API_KEY: str = ""
     SENDER_EMAIL: str = "noreply@deliverytracker.com"
     NOMINATIM_USER_AGENT: str = "delivery-tracker-app"
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
 
     class Config:
         env_file = ".env"

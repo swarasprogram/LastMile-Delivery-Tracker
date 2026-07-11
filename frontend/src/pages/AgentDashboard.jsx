@@ -1,226 +1,228 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import client from "../api/client";
 
-const MapView = lazy(() => import("../components/MapView"));
-
-const TRANSITIONS = {
-  agent_assigned: "picked_up",
-  picked_up: "in_transit",
-  in_transit: "out_for_delivery",
-};
-
 const statusMeta = {
-  agent_assigned:   { color: "text-blue-600",    bg: "bg-blue-50",    label: "Assigned to You" },
-  picked_up:        { color: "text-violet-600",  bg: "bg-violet-50",  label: "Picked Up" },
-  in_transit:       { color: "text-indigo-600",  bg: "bg-indigo-50",  label: "In Transit" },
-  out_for_delivery: { color: "text-orange-600",  bg: "bg-orange-50",  label: "Out for Delivery" },
-  delivered:        { color: "text-emerald-600", bg: "bg-emerald-50", label: "Delivered" },
-  failed:           { color: "text-red-600",     bg: "bg-red-50",     label: "Failed" },
+  confirmed:        { label: "Confirmed",        dot: "bg-amber-400",   text: "text-amber-400"   },
+  agent_assigned:   { label: "Assigned to You",  dot: "bg-blue-400",    text: "text-blue-400"    },
+  picked_up:        { label: "Picked Up",        dot: "bg-violet-400",  text: "text-violet-400"  },
+  in_transit:       { label: "In Transit",       dot: "bg-indigo-400",  text: "text-indigo-400"  },
+  out_for_delivery: { label: "Out for Delivery", dot: "bg-orange-400",  text: "text-orange-400"  },
+  delivered:        { label: "Delivered",        dot: "bg-emerald-400", text: "text-emerald-400" },
+  failed:           { label: "Failed",           dot: "bg-red-400",     text: "text-red-400"     },
 };
+
+const ACTIVE = ["agent_assigned","picked_up","in_transit","out_for_delivery"];
 
 export default function AgentDashboard() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
-  const [agentLat, setAgentLat] = useState(null);
-  const [agentLng, setAgentLng] = useState(null);
-  const [available, setAvailable] = useState(true);
-  const [locationSaved, setLocationSaved] = useState(false);
-  const [watchId, setWatchId] = useState(null);
-  const [activeOrder, setActiveOrder] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [tracking, setTracking] = useState(false);
+  const [gpsStatus, setGpsStatus] = useState("idle"); // idle | active | error
+  const watchRef = useRef(null);
+  const [filter, setFilter] = useState("active");
+
+  useEffect(() => {
+    fetchOrders();
+    const t = setInterval(fetchOrders, 15000);
+    return () => clearInterval(t);
+  }, []);
 
   const fetchOrders = async () => {
-    const r = await client.get("/orders/");
-    setOrders(r.data);
+    try {
+      const r = await client.get("/orders/");
+      setOrders(r.data);
+    } finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchOrders(); }, []);
-
   const startTracking = () => {
-    if (!navigator.geolocation) return alert("Geolocation not supported");
-    const id = navigator.geolocation.watchPosition(
+    if (!navigator.geolocation) { setGpsStatus("error"); return; }
+    setTracking(true); setGpsStatus("active");
+    watchRef.current = navigator.geolocation.watchPosition(
       async (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        setAgentLat(lat);
-        setAgentLng(lng);
-        await client.patch("/agents/location", {
-          current_lat: lat, current_lng: lng, is_available: available
-        });
+        try {
+          await client.patch("/agents/location", {
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          });
+        } catch (e) { console.error("Location update failed", e); }
       },
-      null,
-      { enableHighAccuracy: true, maximumAge: 5000 }
+      () => setGpsStatus("error"),
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
     );
-    setWatchId(id);
   };
 
   const stopTracking = () => {
-    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-    setWatchId(null);
+    if (watchRef.current) navigator.geolocation.clearWatch(watchRef.current);
+    setTracking(false); setGpsStatus("idle");
+    watchRef.current = null;
   };
 
-  const saveAvailability = async () => {
-    if (agentLat === null) return alert("Start location tracking first");
-    await client.patch("/agents/location", {
-      current_lat: agentLat, current_lng: agentLng, is_available: available
-    });
-    setLocationSaved(true);
-    setTimeout(() => setLocationSaved(false), 2000);
-  };
+  const total     = orders.length;
+  const active    = orders.filter(o => ACTIVE.includes(o.status)).length;
+  const delivered = orders.filter(o => o.status === "delivered").length;
+  const today     = orders.filter(o => {
+    const d = new Date(o.created_at);
+    const now = new Date();
+    return d.toDateString() === now.toDateString();
+  }).length;
 
-  const advance = async (order) => {
-    const next = TRANSITIONS[order.status];
-    if (!next) return;
-    await client.patch(`/orders/${order.id}/status`, { status: next });
-    fetchOrders();
-  };
-
-  const markDelivered = async (order) => {
-    await client.patch(`/orders/${order.id}/status`, { status: "delivered" });
-    fetchOrders();
-  };
-
-  const markFailed = async (order) => {
-    await client.patch(`/orders/${order.id}/status`, { status: "failed", note: "Delivery failed" });
-    fetchOrders();
-  };
-
-  const active = orders.filter(o => !["delivered","failed","rescheduled"].includes(o.status));
-  const done = orders.filter(o => ["delivered","failed","rescheduled"].includes(o.status));
+  const filtered = filter === "active"
+    ? orders.filter(o => ACTIVE.includes(o.status))
+    : filter === "delivered"
+    ? orders.filter(o => o.status === "delivered")
+    : orders;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <nav className="bg-gradient-to-r from-slate-800 to-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-lg">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">🛵</span>
-          <span className="text-xl font-bold">Agent Portal</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className={`w-2 h-2 rounded-full ${watchId ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
-          <span className="text-sm opacity-80">{watchId ? "Live Tracking" : "Offline"}</span>
-          <span className="text-sm opacity-80">|</span>
-          <span className="text-sm opacity-80">Hi, {user?.name}</span>
-          <button onClick={logout} className="bg-white/10 hover:bg-white/20 text-sm px-3 py-1.5 rounded-lg transition">Logout</button>
-        </div>
-      </nav>
-
-      <div className="flex flex-1 max-w-7xl mx-auto w-full gap-6 p-6">
-        {/* Left panel */}
-        <div className="w-full lg:w-1/2 space-y-4">
-          {/* Location Card */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
-            <h3 className="font-semibold text-slate-700 mb-4 flex items-center gap-2">
-              <span>📡</span> Live Location
-            </h3>
-            <div className="flex flex-wrap gap-3 items-center">
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-slate-400 mb-1">Current Position</p>
-                <p className="text-sm font-mono font-medium text-slate-700">
-                  {agentLat ? `${agentLat.toFixed(5)}, ${agentLng.toFixed(5)}` : "Not tracking"}
-                </p>
-              </div>
-              <label className="flex items-center gap-2 text-sm text-slate-600">
-                <input type="checkbox" checked={available} onChange={e => setAvailable(e.target.checked)} className="rounded" />
-                Available
-              </label>
-              {!watchId ? (
-                <button onClick={startTracking} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-medium transition">
-                  📍 Start Tracking
-                </button>
-              ) : (
-                <button onClick={stopTracking} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-medium transition">
-                  ⏹ Stop
-                </button>
-              )}
-              <button onClick={saveAvailability} className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded-xl text-sm font-medium transition">
-                {locationSaved ? "✓ Saved" : "Save"}
-              </button>
+    <div className="min-h-screen bg-gray-950">
+      {/* Sidebar */}
+      <div className="fixed left-0 top-0 h-full w-64 bg-gray-900 border-r border-gray-800 flex flex-col z-10">
+        <div className="p-6 border-b border-gray-800">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold text-sm">LM</div>
+            <div>
+              <p className="text-white font-semibold text-sm">Last-Mile</p>
+              <p className="text-gray-400 text-xs">Agent Portal</p>
             </div>
           </div>
+        </div>
 
-          {/* Active Orders */}
-          <h2 className="text-xl font-bold text-slate-800 mt-2">Active Orders ({active.length})</h2>
-          {active.length === 0 && (
-            <div className="text-center py-12 text-slate-400">
-              <p className="text-4xl mb-2">✅</p>
-              <p>No active orders</p>
+        <div className="p-4 border-b border-gray-800">
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-gray-800">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center text-white text-xs font-bold">
+              {user?.name?.[0]?.toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-sm font-medium truncate">{user?.name}</p>
+              <p className="text-gray-400 text-xs">Delivery Agent</p>
+            </div>
+          </div>
+        </div>
+
+        {/* GPS tracking toggle */}
+        <div className="p-4 border-b border-gray-800">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">GPS Tracking</p>
+          {!tracking ? (
+            <button onClick={startTracking}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2">
+              <span>📍</span> Start Tracking
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2">
+                <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                <span className="text-emerald-400 text-xs font-semibold">Live · Sharing location</span>
+              </div>
+              <button onClick={stopTracking}
+                className="w-full bg-gray-800 hover:bg-gray-700 text-gray-300 py-2 rounded-xl text-sm transition">
+                Stop Tracking
+              </button>
             </div>
           )}
-          {active.map(order => {
-            const meta = statusMeta[order.status] || {};
-            return (
-              <div key={order.id}
-                className={`bg-white rounded-2xl shadow-sm border-2 transition cursor-pointer ${activeOrder?.id === order.id ? "border-blue-400" : "border-transparent hover:border-slate-200"}`}
-                onClick={() => setActiveOrder(activeOrder?.id === order.id ? null : order)}>
-                <div className="p-5">
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <p className="font-semibold text-slate-800">{order.pickup_address}</p>
-                      <p className="text-sm text-slate-500">→ {order.drop_address}</p>
-                      <p className="text-sm text-slate-400 mt-1">₹{order.total_charge} · {order.payment_type}</p>
-                    </div>
-                    <span className={`text-xs font-semibold px-3 py-1 rounded-full ${meta.color} ${meta.bg}`}>{meta.label}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {TRANSITIONS[order.status] && (
-                      <button onClick={(e) => { e.stopPropagation(); advance(order); }}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-medium transition">
-                        Mark {TRANSITIONS[order.status].replace(/_/g, " ")} →
-                      </button>
-                    )}
-                    {order.status === "out_for_delivery" && (
-                      <>
-                        <button onClick={(e) => { e.stopPropagation(); markDelivered(order); }}
-                          className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-medium transition">
-                          ✓ Delivered
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); markFailed(order); }}
-                          className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-medium transition">
-                          ✗ Failed
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          {done.length > 0 && (
-            <>
-              <h2 className="text-xl font-bold text-slate-800 mt-2">Completed ({done.length})</h2>
-              {done.map(order => {
-                const meta = statusMeta[order.status] || {};
-                return (
-                  <div key={order.id} className="bg-white rounded-2xl p-5 border border-slate-100 opacity-70">
-                    <div className="flex justify-between">
-                      <div>
-                        <p className="font-medium text-slate-700 text-sm">{order.pickup_address} → {order.drop_address}</p>
-                        <p className="text-xs text-slate-400 mt-1">₹{order.total_charge}</p>
-                      </div>
-                      <span className={`text-xs font-semibold px-3 py-1 rounded-full h-fit ${meta.color} ${meta.bg}`}>{meta.label}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </>
+          {gpsStatus === "error" && (
+            <p className="text-red-400 text-xs mt-2">⚠️ GPS unavailable. Enable location access.</p>
           )}
         </div>
 
-        {/* Right: Map */}
-        <div className="hidden lg:block lg:w-1/2">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden sticky top-6" style={{height: "600px"}}>
-            <Suspense fallback={<div className="h-full flex items-center justify-center text-slate-400">Loading map...</div>}>
-              <MapView
-                pickup={activeOrder?.pickup_lat ? [activeOrder.pickup_lat, activeOrder.pickup_lng] : null}
-                drop={activeOrder?.drop_lat ? [activeOrder.drop_lat, activeOrder.drop_lng] : null}
-                agent={agentLat ? [agentLat, agentLng] : null}
-              />
-            </Suspense>
-            {!activeOrder && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-white/80 backdrop-blur-sm">
-                <p className="text-4xl mb-2">🗺️</p>
-                <p className="font-medium">Click an order to see route</p>
+        <nav className="flex-1 p-4 space-y-1">
+          <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 text-sm font-medium">
+            <span>📦</span> My Orders
+          </button>
+          <button onClick={() => navigate("/agent/map")}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-gray-400 hover:bg-gray-800 hover:text-white text-sm transition">
+            <span>🗺️</span> Live Map
+          </button>
+        </nav>
+
+        <div className="p-4 border-t border-gray-800">
+          <button onClick={logout}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-gray-400 hover:bg-red-500/10 hover:text-red-400 text-sm transition">
+            <span>🚪</span> Logout
+          </button>
+        </div>
+      </div>
+
+      {/* Main */}
+      <div className="ml-64 min-h-screen">
+        <div className="border-b border-gray-800 bg-gray-900/50 backdrop-blur px-8 py-5 sticky top-0 z-10">
+          <h1 className="text-white text-xl font-bold">My Deliveries</h1>
+          <p className="text-gray-400 text-sm mt-0.5">Manage and update your assigned orders</p>
+        </div>
+
+        <div className="p-8 space-y-8">
+          {/* Stats */}
+          <div className="grid grid-cols-4 gap-5">
+            {[
+              { label: "Today's Orders", value: today,     icon: "📅", color: "text-blue-400",    grad: "from-blue-600 to-blue-700"    },
+              { label: "Active",         value: active,    icon: "🚚", color: "text-emerald-400", grad: "from-emerald-600 to-emerald-700" },
+              { label: "Delivered",      value: delivered, icon: "✅", color: "text-violet-400",  grad: "from-violet-600 to-violet-700" },
+              { label: "Total Assigned", value: total,     icon: "📦", color: "text-orange-400",  grad: "from-orange-500 to-orange-600" },
+            ].map(s => (
+              <div key={s.label} className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${s.grad} flex items-center justify-center text-lg mb-4`}>{s.icon}</div>
+                <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+                <p className="text-gray-400 text-sm mt-1">{s.label}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Filter + orders */}
+          <div>
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-white font-semibold text-lg">Orders</h2>
+              <div className="flex gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1">
+                {["active","delivered","all"].map(f => (
+                  <button key={f} onClick={() => setFilter(f)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition ${
+                      filter === f ? "bg-emerald-600 text-white" : "text-gray-400 hover:text-white"
+                    }`}>
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="space-y-3">
+                {[1,2,3].map(i => <div key={i} className="bg-gray-900 border border-gray-800 rounded-2xl h-24 animate-pulse" />)}
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="bg-gray-900 border border-gray-800 rounded-2xl p-16 text-center">
+                <p className="text-5xl mb-4">📭</p>
+                <p className="text-white font-semibold">No {filter} orders</p>
+                <p className="text-gray-400 text-sm mt-1">Orders assigned to you will appear here</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filtered.map(order => {
+                  const meta = statusMeta[order.status] || statusMeta.confirmed;
+                  return (
+                    <div key={order.id}
+                      onClick={() => navigate(`/agent/orders/${order.id}`)}
+                      className="bg-gray-900 border border-gray-800 hover:border-gray-600 rounded-2xl p-5 cursor-pointer transition-all group">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <div className={`w-2 h-2 rounded-full ${meta.dot}`} />
+                            <p className="text-white font-semibold truncate">{order.pickup_address.split(",")[0]}</p>
+                          </div>
+                          <p className="text-gray-400 text-sm truncate ml-4">→ {order.drop_address.split(",")[0]}</p>
+                        </div>
+                        <div className="flex items-center gap-3 ml-4 flex-shrink-0">
+                          <span className={`text-xs font-semibold ${meta.text}`}>{meta.label}</span>
+                          <span className="text-gray-600 group-hover:text-gray-400 text-sm transition">→</span>
+                        </div>
+                      </div>
+                      <div className="flex justify-between mt-3 text-xs text-gray-500">
+                        <span>{order.order_type} · {order.payment_type}</span>
+                        <span className="text-emerald-400 font-semibold">₹{order.total_charge}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

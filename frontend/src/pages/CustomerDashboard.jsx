@@ -1,416 +1,214 @@
-import { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import client from "../api/client";
-import AddressAutocomplete from "../components/AddressAutocomplete";
 
-const MapView = lazy(() => import("../components/MapView"));
+const statusMeta = {
+  confirmed:        { color: "text-amber-700",   bg: "bg-amber-50",   border: "border-amber-200",   dot: "bg-amber-400",   label: "Confirmed" },
+  agent_assigned:   { color: "text-blue-700",    bg: "bg-blue-50",    border: "border-blue-200",    dot: "bg-blue-400",    label: "Agent Assigned" },
+  picked_up:        { color: "text-violet-700",  bg: "bg-violet-50",  border: "border-violet-200",  dot: "bg-violet-400",  label: "Picked Up" },
+  in_transit:       { color: "text-indigo-700",  bg: "bg-indigo-50",  border: "border-indigo-200",  dot: "bg-indigo-400",  label: "In Transit" },
+  out_for_delivery: { color: "text-orange-700",  bg: "bg-orange-50",  border: "border-orange-200",  dot: "bg-orange-400",  label: "Out for Delivery" },
+  delivered:        { color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200", dot: "bg-emerald-400", label: "Delivered" },
+  failed:           { color: "text-red-700",     bg: "bg-red-50",     border: "border-red-200",     dot: "bg-red-400",     label: "Failed" },
+  rescheduled:      { color: "text-gray-700",    bg: "bg-gray-50",    border: "border-gray-200",    dot: "bg-gray-400",    label: "Rescheduled" },
+};
 
 const STATUS_STEPS = ["confirmed","agent_assigned","picked_up","in_transit","out_for_delivery","delivered"];
 
-const statusMeta = {
-  confirmed:        { color: "text-amber-600",   bg: "bg-amber-50",   label: "Confirmed" },
-  agent_assigned:   { color: "text-blue-600",    bg: "bg-blue-50",    label: "Agent Assigned" },
-  picked_up:        { color: "text-violet-600",  bg: "bg-violet-50",  label: "Picked Up" },
-  in_transit:       { color: "text-indigo-600",  bg: "bg-indigo-50",  label: "In Transit" },
-  out_for_delivery: { color: "text-orange-600",  bg: "bg-orange-50",  label: "Out for Delivery" },
-  delivered:        { color: "text-emerald-600", bg: "bg-emerald-50", label: "Delivered" },
-  failed:           { color: "text-red-600",     bg: "bg-red-50",     label: "Failed" },
-  rescheduled:      { color: "text-gray-600",    bg: "bg-gray-50",    label: "Rescheduled" },
-};
-
-const ACTIVE = ["agent_assigned","picked_up","in_transit","out_for_delivery"];
-
-const PACKAGE_PRESETS = [
-  { label: "Small",  sub: "≤1kg",    vals: { length_cm:"20", breadth_cm:"15", height_cm:"10", actual_weight_kg:"0.5" } },
-  { label: "Medium", sub: "≤3kg",    vals: { length_cm:"35", breadth_cm:"25", height_cm:"20", actual_weight_kg:"2" } },
-  { label: "Large",  sub: "≤7kg",    vals: { length_cm:"50", breadth_cm:"40", height_cm:"30", actual_weight_kg:"5" } },
-  { label: "Custom", sub: "I'll fill", vals: null },
-];
-
 export default function CustomerDashboard() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const [agentPos, setAgentPos] = useState(null);
-  const [showForm, setShowForm] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const pollRef = useRef(null);
-
-  const [pickup, setPickup] = useState({ address: "", lat: null, lng: null });
-  const [drop, setDrop]     = useState({ address: "", lat: null, lng: null });
-  const [dims, setDims] = useState({ length_cm:"", breadth_cm:"", height_cm:"", actual_weight_kg:"" });
-  const [orderType, setOrderType] = useState("B2C");
-  const [paymentType, setPaymentType] = useState("Prepaid");
-
-  // Live estimate state
-  const [estimate, setEstimate] = useState(null);
-  const [estimating, setEstimating] = useState(false);
-
-  const fetchOrders = async () => {
-    const r = await client.get("/orders/");
-    setOrders(r.data);
-  };
-
-  useEffect(() => { fetchOrders(); }, []);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("all");
 
   useEffect(() => {
-    clearInterval(pollRef.current);
-    if (!selected || !ACTIVE.includes(selected.status)) {
-      setAgentPos(null);
-      return;
-    }
-    const poll = async () => {
-      try {
-        const r = await client.get(`/orders/${selected.id}/agent-location`);
-        setAgentPos([r.data.lat, r.data.lng]);
-      } catch { setAgentPos(null); }
-    };
-    poll();
-    pollRef.current = setInterval(poll, 5000);
-    return () => clearInterval(pollRef.current);
-  }, [selected?.id, selected?.status]);
+    client.get("/orders/").then(r => { setOrders(r.data); setLoading(false); });
+  }, []);
 
-  // Auto-fetch estimate when pickup, drop, and dims are all filled
-  useEffect(() => {
-    if (
-      !pickup.lat || !drop.lat ||
-      !dims.length_cm || !dims.breadth_cm || !dims.height_cm || !dims.actual_weight_kg
-    ) {
-      setEstimate(null);
-      return;
-    }
-    const controller = new AbortController();
-    const run = async () => {
-      setEstimating(true);
-      try {
-        const r = await client.post("/orders/estimate", {
-          pickup_address: pickup.address,
-          pickup_lat: pickup.lat,
-          pickup_lng: pickup.lng,
-          drop_address: drop.address,
-          drop_lat: drop.lat,
-          drop_lng: drop.lng,
-          length_cm: +dims.length_cm,
-          breadth_cm: +dims.breadth_cm,
-          height_cm: +dims.height_cm,
-          actual_weight_kg: +dims.actual_weight_kg,
-          order_type: orderType,
-          payment_type: paymentType,
-        }, { signal: controller.signal });
-        setEstimate(r.data);
-      } catch (err) {
-        if (!controller.signal.aborted) setEstimate(null);
-      } finally {
-        if (!controller.signal.aborted) setEstimating(false);
-      }
-    };
-    const t = setTimeout(run, 500);
-    return () => { clearTimeout(t); controller.abort(); };
-  }, [pickup.lat, drop.lat, dims.length_cm, dims.breadth_cm, dims.height_cm, dims.actual_weight_kg, orderType, paymentType]);
+  const total     = orders.length;
+  const active    = orders.filter(o => !["delivered","failed"].includes(o.status)).length;
+  const delivered = orders.filter(o => o.status === "delivered").length;
+  const revenue   = orders.reduce((s, o) => s + (Number(o.total_charge) || 0), 0).toFixed(0);
 
-  const placeOrder = async (e) => {
-    e.preventDefault();
-    if (!pickup.lat || !drop.lat) {
-      setError("Please select addresses from the dropdown suggestions.");
-      return;
-    }
-    setLoading(true); setError("");
-    try {
-      await client.post("/orders/", {
-        pickup_address: pickup.address,
-        pickup_lat: pickup.lat,
-        pickup_lng: pickup.lng,
-        drop_address: drop.address,
-        drop_lat: drop.lat,
-        drop_lng: drop.lng,
-        order_type: orderType,
-        payment_type: paymentType,
-        length_cm: +dims.length_cm,
-        breadth_cm: +dims.breadth_cm,
-        height_cm: +dims.height_cm,
-        actual_weight_kg: +dims.actual_weight_kg,
-      });
-      setShowForm(false);
-      setPickup({ address:"", lat:null, lng:null });
-      setDrop({ address:"", lat:null, lng:null });
-      setDims({ length_cm:"", breadth_cm:"", height_cm:"", actual_weight_kg:"" });
-      setEstimate(null);
-      fetchOrders();
-    } catch(err) {
-      setError(err.response?.data?.detail || "Failed to place order");
-    } finally { setLoading(false); }
-  };
-
-  const selectOrder = (order) => {
-    if (selected?.id === order.id) { setSelected(null); return; }
-    setSelected(order);
-    setAgentPos(null);
-  };
+  const filtered = filter === "all" ? orders
+    : filter === "active" ? orders.filter(o => !["delivered","failed"].includes(o.status))
+    : orders.filter(o => o.status === filter);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <nav className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white px-6 py-4 flex justify-between items-center shadow-lg">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">📦</span>
-          <span className="text-xl font-bold tracking-tight">Last-Mile Tracker</span>
+    <div className="min-h-screen bg-gray-950">
+      {/* Sidebar */}
+      <div className="fixed left-0 top-0 h-full w-64 bg-gray-900 border-r border-gray-800 flex flex-col z-10">
+        <div className="p-6 border-b border-gray-800">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-blue-500 flex items-center justify-center text-white font-bold text-sm">
+              LM
+            </div>
+            <div>
+              <p className="text-white font-semibold text-sm leading-tight">Last-Mile</p>
+              <p className="text-gray-400 text-xs">Tracker</p>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm opacity-80">Hi, {user?.name}</span>
-          <button onClick={logout} className="bg-white/20 hover:bg-white/30 text-sm px-3 py-1.5 rounded-lg transition">Logout</button>
-        </div>
-      </nav>
 
-      <div className="flex flex-1 max-w-7xl mx-auto w-full gap-6 p-6">
-        {/* Left: Orders */}
-        <div className="w-full lg:w-1/2 space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-2xl font-bold text-slate-800">My Orders</h2>
-            <button onClick={() => setShowForm(!showForm)}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium shadow transition">
-              {showForm ? "✕ Cancel" : "+ New Order"}
-            </button>
+        <div className="p-4 border-b border-gray-800">
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-gray-800">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-indigo-600 flex items-center justify-center text-white text-xs font-bold">
+              {user?.name?.[0]?.toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-sm font-medium truncate">{user?.name}</p>
+              <p className="text-gray-400 text-xs">Customer</p>
+            </div>
+          </div>
+        </div>
+
+        <nav className="flex-1 p-4 space-y-1">
+          <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-blue-500/10 text-blue-400 text-sm font-medium">
+            <span>📦</span> My Orders
+          </button>
+          <button
+            onClick={() => navigate("/orders/new")}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-gray-400 hover:bg-gray-800 hover:text-white text-sm transition"
+          >
+            <span>➕</span> New Order
+          </button>
+        </nav>
+
+        <div className="p-4 border-t border-gray-800">
+          <button
+            onClick={logout}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-gray-400 hover:bg-red-500/10 hover:text-red-400 text-sm transition"
+          >
+            <span>🚪</span> Logout
+          </button>
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div className="ml-64 min-h-screen">
+        {/* Header */}
+        <div className="border-b border-gray-800 bg-gray-900/50 backdrop-blur px-8 py-5 flex justify-between items-center sticky top-0 z-10">
+          <div>
+            <h1 className="text-white text-xl font-bold">Dashboard</h1>
+            <p className="text-gray-400 text-sm mt-0.5">Track and manage your deliveries</p>
+          </div>
+          <button
+            onClick={() => navigate("/orders/new")}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-semibold text-sm transition shadow-lg shadow-blue-900/30"
+          >
+            <span>+</span> New Order
+          </button>
+        </div>
+
+        <div className="p-8 space-y-8">
+          {/* Stats */}
+          <div className="grid grid-cols-4 gap-5">
+            {[
+              { label: "Total Orders", value: total,      icon: "📦", gradient: "from-blue-600 to-blue-700",    sub: "All time" },
+              { label: "Active",       value: active,     icon: "🚚", gradient: "from-violet-600 to-violet-700", sub: "In progress" },
+              { label: "Delivered",    value: delivered,  icon: "✅", gradient: "from-emerald-600 to-emerald-700", sub: "Completed" },
+              { label: "Total Spent",  value: `₹${revenue}`, icon: "💰", gradient: "from-orange-500 to-orange-600", sub: "Lifetime" },
+            ].map(s => (
+              <div key={s.label} className="bg-gray-900 border border-gray-800 rounded-2xl p-5 hover:border-gray-700 transition">
+                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${s.gradient} flex items-center justify-center text-lg mb-4`}>
+                  {s.icon}
+                </div>
+                <p className="text-2xl font-bold text-white">{s.value}</p>
+                <p className="text-gray-400 text-sm mt-1">{s.label}</p>
+                <p className="text-gray-600 text-xs mt-0.5">{s.sub}</p>
+              </div>
+            ))}
           </div>
 
-          {showForm && (
-            <div className="bg-white rounded-2xl shadow-md p-6 border border-slate-100">
-              <h3 className="font-semibold text-lg mb-4 text-slate-700">Place New Order</h3>
-              <form onSubmit={placeOrder} className="space-y-3">
-                <AddressAutocomplete
-                  placeholder="📍 Pickup Address"
-                  onSelect={r => setPickup({ address: r.address, lat: r.lat, lng: r.lng })}
-                />
-                {pickup.lat && (
-                  <p className="text-xs text-emerald-600 -mt-1 ml-1">
-                    ✓ {pickup.lat.toFixed(5)}, {pickup.lng.toFixed(5)}
-                  </p>
-                )}
+          {/* Filter tabs + orders */}
+          <div>
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-white font-semibold text-lg">Orders</h2>
+              <div className="flex gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1">
+                {["all","active","delivered","failed"].map(f => (
+                  <button
+                    key={f}
+                    onClick={() => setFilter(f)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition ${
+                      filter === f
+                        ? "bg-blue-600 text-white"
+                        : "text-gray-400 hover:text-white"
+                    }`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-                <AddressAutocomplete
-                  placeholder="🏠 Drop Address"
-                  onSelect={r => setDrop({ address: r.address, lat: r.lat, lng: r.lng })}
-                />
-                {drop.lat && (
-                  <p className="text-xs text-emerald-600 -mt-1 ml-1">
-                    ✓ {drop.lat.toFixed(5)}, {drop.lng.toFixed(5)}
-                  </p>
-                )}
-
-                {/* Live preview map */}
-                {(pickup.lat || drop.lat) && (
-                  <div className="rounded-xl overflow-hidden border border-slate-200" style={{height:"180px"}}>
-                    <Suspense fallback={<div className="h-full flex items-center justify-center text-slate-400 text-sm">Loading map…</div>}>
-                      <MapView
-                        pickup={pickup.lat ? [pickup.lat, pickup.lng] : null}
-                        drop={drop.lat ? [drop.lat, drop.lng] : null}
-                        agent={null}
-                      />
-                    </Suspense>
-                  </div>
-                )}
-
-                {/* Package size presets */}
-                <div>
-                  <p className="text-xs text-slate-500 mb-2 font-medium">📦 Package Size</p>
-                  <div className="grid grid-cols-4 gap-2 mb-3">
-                    {PACKAGE_PRESETS.map(p => (
-                      <button key={p.label} type="button"
-                        onClick={() => p.vals && setDims(p.vals)}
-                        className={`border rounded-xl p-2.5 text-center transition hover:border-blue-400 hover:bg-blue-50 ${
-                          p.vals && dims.length_cm === p.vals.length_cm
-                            ? "border-blue-500 bg-blue-50"
-                            : "border-slate-200"
-                        }`}>
-                        <p className="text-sm font-semibold text-slate-700">{p.label}</p>
-                        <p className="text-xs text-slate-400">{p.sub}</p>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-3 gap-3">
-                    {["length_cm","breadth_cm","height_cm"].map(f => (
-                      <input key={f} type="number" required
-                        className="border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-300 outline-none"
-                        placeholder={f.replace("_cm","").charAt(0).toUpperCase()+f.replace("_cm","").slice(1)+" cm"}
-                        value={dims[f]}
-                        onChange={e => setDims({...dims, [f]: e.target.value})} />
-                    ))}
-                  </div>
-                </div>
-
-                <input type="number" step="0.1" required
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-300 outline-none"
-                  placeholder="⚖️ Actual Weight (kg)"
-                  value={dims.actual_weight_kg}
-                  onChange={e => setDims({...dims, actual_weight_kg: e.target.value})} />
-
-                <div className="grid grid-cols-2 gap-3">
-                  <select className="border border-slate-200 rounded-xl p-3 text-sm"
-                    value={orderType} onChange={e => setOrderType(e.target.value)}>
-                    <option>B2C</option><option>B2B</option>
-                  </select>
-                  <select className="border border-slate-200 rounded-xl p-3 text-sm"
-                    value={paymentType} onChange={e => setPaymentType(e.target.value)}>
-                    <option>Prepaid</option><option>COD</option>
-                  </select>
-                </div>
-
-                {/* Live price estimate */}
-                {estimating && (
-                  <div className="bg-slate-50 rounded-xl p-4 text-sm text-slate-400 animate-pulse text-center">
-                    Calculating price…
-                  </div>
-                )}
-                {estimate && !estimating && (
-                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
-                    <p className="text-xs font-semibold text-indigo-700 mb-3">💰 Price Estimate</p>
-                    <div className="space-y-1.5 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Billed weight</span>
-                        <span className="font-medium">{estimate.billed_weight_kg} kg</span>
+            {loading ? (
+              <div className="space-y-3">
+                {[1,2,3].map(i => (
+                  <div key={i} className="bg-gray-900 border border-gray-800 rounded-2xl p-5 animate-pulse h-24" />
+                ))}
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="bg-gray-900 border border-gray-800 rounded-2xl p-16 text-center">
+                <p className="text-5xl mb-4">📭</p>
+                <p className="text-white font-semibold">No orders yet</p>
+                <p className="text-gray-400 text-sm mt-1">Place your first order to get started</p>
+                <button
+                  onClick={() => navigate("/orders/new")}
+                  className="mt-5 bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-xl text-sm font-semibold transition"
+                >
+                  + New Order
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filtered.map(order => {
+                  const meta = statusMeta[order.status] || statusMeta.confirmed;
+                  const step = STATUS_STEPS.indexOf(order.status);
+                  return (
+                    <div
+                      key={order.id}
+                      onClick={() => navigate(`/orders/${order.id}`)}
+                      className="bg-gray-900 border border-gray-800 hover:border-gray-600 rounded-2xl p-5 cursor-pointer transition-all group"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <div className={`w-2 h-2 rounded-full ${meta.dot}`} />
+                            <p className="text-white font-semibold truncate">{order.pickup_address.split(",")[0]}</p>
+                          </div>
+                          <p className="text-gray-400 text-sm truncate ml-4">→ {order.drop_address.split(",")[0]}</p>
+                        </div>
+                        <div className="flex items-center gap-3 ml-4 flex-shrink-0">
+                          <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${meta.color} ${meta.bg}`}>
+                            {meta.label}
+                          </span>
+                          <span className="text-blue-400 font-bold text-sm">₹{order.total_charge}</span>
+                          <span className="text-gray-600 group-hover:text-gray-400 text-sm transition">→</span>
+                        </div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Base charge</span>
-                        <span className="font-medium">₹{estimate.base_charge}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Distance</span>
-                        <span className="font-medium">{estimate.distance_km} km</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Distance charge</span>
-                        <span className="font-medium">₹{estimate.distance_charge}</span>
-                      </div>
-                      {estimate.cod_surcharge > 0 && (
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">COD surcharge</span>
-                          <span className="font-medium">₹{estimate.cod_surcharge}</span>
+
+                      {step >= 0 && (
+                        <div className="mt-4">
+                          <div className="flex gap-1">
+                            {STATUS_STEPS.map((_, i) => (
+                              <div key={i} className={`h-1 rounded-full flex-1 transition-all ${i <= step ? "bg-blue-500" : "bg-gray-700"}`} />
+                            ))}
+                          </div>
                         </div>
                       )}
-                    </div>
-                    <div className="border-t border-indigo-200 mt-3 pt-3 flex justify-between items-center">
-                      <span className="font-semibold text-indigo-700">Total</span>
-                      <span className="text-xl font-bold text-indigo-700">₹{estimate.total_charge}</span>
-                    </div>
-                  </div>
-                )}
 
-                {error && <p className="text-red-500 text-sm">{error}</p>}
-                <button type="submit" disabled={loading}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-semibold transition disabled:opacity-50">
-                  {loading ? "Placing…" : "Place Order →"}
-                </button>
-              </form>
-            </div>
-          )}
-
-          {orders.length === 0 && !showForm && (
-            <div className="text-center py-20 text-slate-400">
-              <p className="text-5xl mb-3">📭</p>
-              <p className="font-medium">No orders yet. Place your first one!</p>
-            </div>
-          )}
-
-          {orders.map(order => {
-            const meta = statusMeta[order.status] || statusMeta.confirmed;
-            const isSelected = selected?.id === order.id;
-            const step = STATUS_STEPS.indexOf(order.status);
-            return (
-              <div key={order.id}
-                className={`bg-white rounded-2xl shadow-sm border-2 cursor-pointer transition-all ${isSelected ? "border-blue-400 shadow-md" : "border-transparent hover:border-slate-200"}`}
-                onClick={() => selectOrder(order)}>
-                <div className="p-5">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-slate-800 truncate">{order.pickup_address.split(",")[0]}</p>
-                      <p className="text-sm text-slate-500 truncate">→ {order.drop_address.split(",")[0]}</p>
-                    </div>
-                    <span className={`ml-3 text-xs font-semibold px-3 py-1 rounded-full flex-shrink-0 ${meta.color} ${meta.bg}`}>
-                      {meta.label}
-                    </span>
-                  </div>
-                  {step >= 0 && (
-                    <div className="mt-3">
-                      <div className="flex gap-0.5 mb-1">
-                        {STATUS_STEPS.map((_, i) => (
-                          <div key={i} className={`h-1.5 rounded-full flex-1 ${i <= step ? "bg-blue-500" : "bg-slate-100"}`} />
-                        ))}
-                      </div>
-                      <div className="flex justify-between text-xs text-slate-400">
-                        <span>Confirmed</span><span>Delivered</span>
-                      </div>
-                    </div>
-                  )}
-                  <div className="flex justify-between mt-3 text-sm">
-                    <span className="text-slate-400">{order.order_type} · {order.payment_type}</span>
-                    <span className="font-bold text-blue-600">₹{order.total_charge}</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Right: Live Map */}
-        <div className="hidden lg:flex lg:w-1/2 flex-col gap-4">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex-1 relative" style={{minHeight:"420px"}}>
-            {selected ? (
-              <>
-                <Suspense fallback={<div className="h-full flex items-center justify-center">Loading map…</div>}>
-                  <MapView
-                    pickup={selected.pickup_lat ? [selected.pickup_lat, selected.pickup_lng] : null}
-                    drop={selected.drop_lat ? [selected.drop_lat, selected.drop_lng] : null}
-                    agent={agentPos}
-                  />
-                </Suspense>
-                {agentPos && (
-                  <div className="absolute top-3 right-3 z-[999] bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5">
-                    <span className="w-2 h-2 bg-white rounded-full animate-ping inline-block" />
-                    LIVE
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400">
-                <p className="text-5xl mb-3">🗺️</p>
-                <p className="font-medium">Select an order to track</p>
-                <p className="text-sm mt-1">Agent location updates every 5 seconds</p>
-              </div>
-            )}
-          </div>
-
-          {selected && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-semibold text-slate-700">Timeline</h3>
-                {agentPos && <span className="text-xs text-emerald-600 font-medium">🟢 Agent is live</span>}
-              </div>
-              <div className="space-y-3">
-                {selected.tracking_events.map((ev, i) => {
-                  const isLatest = i === selected.tracking_events.length - 1;
-                  return (
-                    <div key={ev.id} className="flex gap-3 items-start">
-                      <div className="flex flex-col items-center">
-                        <div className={`w-3 h-3 rounded-full mt-0.5 ${isLatest ? "bg-blue-500 ring-4 ring-blue-100" : "bg-slate-200"}`} />
-                        {i < selected.tracking_events.length - 1 && <div className="w-0.5 h-6 bg-slate-200 mt-1" />}
-                      </div>
-                      <div>
-                        <p className={`text-sm font-medium capitalize ${isLatest ? "text-blue-600" : "text-slate-600"}`}>
-                          {ev.status.replace(/_/g, " ")}
-                        </p>
-                        <p className="text-xs text-slate-400">{new Date(ev.created_at).toLocaleString()}</p>
-                        {ev.note && <p className="text-xs text-slate-400 italic">{ev.note}</p>}
+                      <div className="flex justify-between mt-3 text-xs text-gray-500">
+                        <span>{order.order_type} · {order.payment_type}</span>
+                        <span>{new Date(order.created_at).toLocaleDateString()}</span>
                       </div>
                     </div>
                   );
                 })}
               </div>
-              <div className="mt-4 grid grid-cols-3 gap-3 bg-slate-50 rounded-xl p-3">
-                <div><p className="text-xs text-slate-400">Billed Wt.</p><p className="font-bold text-sm">{selected.billed_weight_kg} kg</p></div>
-                <div><p className="text-xs text-slate-400">Base</p><p className="font-bold text-sm">₹{selected.base_charge}</p></div>
-                <div><p className="text-xs text-slate-400">Total</p><p className="font-bold text-sm text-blue-600">₹{selected.total_charge}</p></div>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>

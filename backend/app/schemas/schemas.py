@@ -119,10 +119,10 @@ class OrderEstimateRequest(BaseModel):
 class OrderEstimateResponse(BaseModel):
     pickup_zone_id: UUID
     drop_zone_id: UUID
-    pickup_lat: Optional[float]
-    pickup_lng: Optional[float]
-    drop_lat: Optional[float]
-    drop_lng: Optional[float]
+    pickup_lat: Optional[float] = None
+    pickup_lng: Optional[float] = None
+    drop_lat: Optional[float] = None
+    drop_lng: Optional[float] = None
     volumetric_weight_kg: float
     billed_weight_kg: float
     base_charge: float

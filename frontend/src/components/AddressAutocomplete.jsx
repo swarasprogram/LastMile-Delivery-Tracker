@@ -60,7 +60,7 @@ export default function AddressAutocomplete({ placeholder, onSelect }) {
         <span className="absolute right-3 top-3.5 text-xs text-slate-400 animate-pulse">Searching…</span>
       )}
       {show && results.length > 0 && (
-        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+        <div className="absolute z-[999] w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
           {results.map((f, i) => (
             <div key={i} onMouseDown={() => select(f)}
               className="px-4 py-3 cursor-pointer hover:bg-blue-50 border-b border-slate-50 last:border-0 flex gap-3 items-start">
