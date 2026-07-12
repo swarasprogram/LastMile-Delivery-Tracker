@@ -39,8 +39,8 @@ export default function AgentMap() {
         setMyPos([pos.coords.latitude, pos.coords.longitude]);
         try {
           await client.patch("/agents/location", {
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
+            current_lat: pos.coords.latitude,
+            current_lng: pos.coords.longitude,
           });
         } catch {}
       },

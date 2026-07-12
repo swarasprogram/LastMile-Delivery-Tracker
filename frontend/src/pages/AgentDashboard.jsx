@@ -45,8 +45,8 @@ export default function AgentDashboard() {
       async (pos) => {
         try {
           await client.patch("/agents/location", {
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
+            current_lat: pos.coords.latitude,
+            current_lng: pos.coords.longitude,
           });
         } catch (e) { console.error("Location update failed", e); }
       },
