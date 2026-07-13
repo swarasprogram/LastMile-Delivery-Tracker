@@ -189,6 +189,16 @@ class OrderOut(BaseModel):
     distance_km: Optional[float] = 0
     distance_charge: Optional[float] = 0
 
+    # Payment
+    payment_status: Optional[str] = "unpaid"
+    refunded_at: Optional[datetime] = None
+
+    # Proof of Delivery
+    pod_photo: Optional[str] = None
+    pod_signature: Optional[str] = None
+    pod_note: Optional[str] = None
+    delivered_at: Optional[datetime] = None
+
     class Config:
         from_attributes = True
 
@@ -196,6 +206,14 @@ class OrderOut(BaseModel):
 class StatusUpdateRequest(BaseModel):
     status: str
     note: Optional[str] = None
+    # Proof of Delivery, supplied when marking an order delivered
+    pod_photo: Optional[str] = None
+    pod_signature: Optional[str] = None
+    pod_note: Optional[str] = None
+
+
+class ManualAssignRequest(BaseModel):
+    agent_id: UUID
 
 
 class RescheduleRequest(BaseModel):

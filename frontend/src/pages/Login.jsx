@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import Brand from "../components/Brand";
 
 export default function Login() {
   const { login } = useAuth();
@@ -24,30 +25,24 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-black flex items-center justify-center p-4">
       {/* Background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[32rem] h-[32rem] bg-brand/10 rounded-full blur-[120px]" />
       </div>
 
       <div className="w-full max-w-sm relative">
         {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center text-white text-2xl font-bold mx-auto mb-4 shadow-lg shadow-blue-900/40">
-            📦
-          </div>
-          <h1 className="text-white text-2xl font-bold">Last-Mile Tracker</h1>
-          <p className="text-gray-500 text-sm mt-1">Sign in to your account</p>
-        </div>
+        <Brand size="lg" stacked subtitle="Sign in to your account" className="mb-8" />
 
         {/* Card */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+        <div className="card p-6">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">Email</label>
+              <label className="eyebrow mb-2 block">Email</label>
               <input
                 type="email" required autoFocus
-                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm placeholder-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition"
+                className="field"
                 placeholder="you@example.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
@@ -55,10 +50,10 @@ export default function Login() {
             </div>
 
             <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">Password</label>
+              <label className="eyebrow mb-2 block">Password</label>
               <input
                 type="password" required
-                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm placeholder-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition"
+                className="field"
                 placeholder="••••••••"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
@@ -66,25 +61,25 @@ export default function Login() {
             </div>
 
             {error && (
-              <div className="bg-red-900/20 border border-red-700/30 text-red-400 text-sm rounded-xl px-4 py-3 flex items-center gap-2">
+              <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl px-4 py-3 flex items-center gap-2">
                 <span>⚠️</span> {error}
               </div>
             )}
 
             <button
               type="submit" disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white py-3 rounded-xl font-semibold text-sm transition shadow-lg shadow-blue-900/30 flex items-center justify-center gap-2"
+              className="btn-accent w-full py-3 text-sm flex items-center justify-center gap-2 shadow-brand"
             >
               {loading ? (
-                <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Signing in…</>
+                <><div className="w-4 h-4 border-2 border-black/70 border-t-transparent rounded-full animate-spin" /> Signing in…</>
               ) : "Sign in →"}
             </button>
           </form>
         </div>
 
-        <p className="text-center text-sm text-gray-600 mt-5">
+        <p className="text-center text-sm text-gray-500 mt-5">
           Don't have an account?{" "}
-          <Link to="/register" className="text-blue-400 hover:text-blue-300 font-medium transition">
+          <Link to="/register" className="text-brand hover:text-brand-hover font-medium transition">
             Register
           </Link>
         </p>

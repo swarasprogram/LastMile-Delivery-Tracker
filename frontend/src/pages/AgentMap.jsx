@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import client from "../api/client";
+import Brand from "../components/Brand";
 
 const MapView = lazy(() => import("../components/MapView"));
 
@@ -57,26 +58,23 @@ export default function AgentMap() {
   useEffect(() => () => { if (watchRef.current) navigator.geolocation.clearWatch(watchRef.current); }, []);
 
   return (
-    <div className="min-h-screen bg-gray-950 flex flex-col">
+    <div className="min-h-screen bg-black flex flex-col">
       {/* Top bar */}
-      <div className="border-b border-gray-800 bg-gray-900 px-6 py-4 flex items-center justify-between z-20">
+      <div className="border-b border-white/[0.08] bg-ink px-6 py-4 flex items-center justify-between z-20">
         <button onClick={() => navigate("/agent")}
           className="flex items-center gap-2 text-gray-400 hover:text-white text-sm transition">
           ← Dashboard
         </button>
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-emerald-600 flex items-center justify-center text-white text-xs font-bold">LM</div>
-          <span className="text-white text-sm font-semibold">Live Map</span>
-        </div>
+        <Brand size="sm" subtitle="Live Map" />
         {!tracking ? (
           <button onClick={startTracking}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-xl transition">
+            className="btn-accent text-xs px-4 py-2">
             📍 Share Location
           </button>
         ) : (
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold px-3 py-1.5 rounded-full">
-              <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" /> LIVE
+            <div className="flex items-center gap-2 bg-brand/10 border border-brand/20 text-brand text-xs font-semibold px-3 py-1.5 rounded-full">
+              <span className="w-2 h-2 bg-brand rounded-full animate-pulse" /> LIVE
             </div>
             <button onClick={stopTracking}
               className="text-gray-400 hover:text-white text-xs transition">Stop</button>
@@ -86,9 +84,9 @@ export default function AgentMap() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar: order list */}
-        <div className="w-72 bg-gray-900 border-r border-gray-800 flex flex-col overflow-y-auto">
-          <div className="p-4 border-b border-gray-800">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Active Orders ({orders.length})</p>
+        <div className="w-72 bg-ink border-r border-white/[0.08] flex flex-col overflow-y-auto">
+          <div className="p-4 border-b border-white/[0.08]">
+            <p className="eyebrow">Active Orders ({orders.length})</p>
           </div>
           {orders.length === 0 ? (
             <div className="p-6 text-center text-gray-600 text-sm">No active orders right now</div>
@@ -99,13 +97,13 @@ export default function AgentMap() {
                   onClick={() => setSelected(order)}
                   className={`p-4 rounded-xl cursor-pointer transition border ${
                     selected?.id === order.id
-                      ? "bg-emerald-600/10 border-emerald-500/30"
-                      : "bg-gray-800/50 border-transparent hover:border-gray-700"
+                      ? "bg-brand/10 border-brand/30"
+                      : "bg-white/5 border-transparent hover:border-white/15"
                   }`}>
                   <p className="text-white text-sm font-semibold truncate">{order.pickup_address.split(",")[0]}</p>
                   <p className="text-gray-400 text-xs truncate mt-0.5">→ {order.drop_address.split(",")[0]}</p>
                   <div className="flex justify-between mt-2 items-center">
-                    <span className="text-xs text-emerald-400 capitalize">{order.status.replace(/_/g, " ")}</span>
+                    <span className="text-xs text-brand capitalize">{order.status.replace(/_/g, " ")}</span>
                     <button
                       onClick={e => { e.stopPropagation(); navigate(`/agent/orders/${order.id}`); }}
                       className="text-xs text-gray-500 hover:text-white transition">
@@ -121,7 +119,7 @@ export default function AgentMap() {
         {/* Map */}
         <div className="flex-1 relative">
           {selected?.pickup_lat ? (
-            <Suspense fallback={<div className="h-full flex items-center justify-center bg-gray-950 text-gray-500">Loading map…</div>}>
+            <Suspense fallback={<div className="h-full flex items-center justify-center bg-black text-gray-500">Loading map…</div>}>
               <MapView
                 pickup={[selected.pickup_lat, selected.pickup_lng]}
                 drop={[selected.drop_lat, selected.drop_lng]}
@@ -137,14 +135,14 @@ export default function AgentMap() {
 
           {/* Selected order overlay */}
           {selected && (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[999] bg-gray-900 border border-gray-700 rounded-2xl px-5 py-3 shadow-xl flex items-center gap-4">
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[999] bg-ink border border-white/15 rounded-2xl px-5 py-3 shadow-2xl shadow-black/60 flex items-center gap-4">
               <div>
                 <p className="text-white text-sm font-semibold">{selected.pickup_address.split(",")[0]} → {selected.drop_address.split(",")[0]}</p>
                 <p className="text-gray-400 text-xs mt-0.5 capitalize">{selected.status.replace(/_/g, " ")}</p>
               </div>
               <button
                 onClick={() => navigate(`/agent/orders/${selected.id}`)}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-xl transition whitespace-nowrap">
+                className="btn-accent text-xs px-4 py-2 whitespace-nowrap">
                 View Order →
               </button>
             </div>

@@ -1,16 +1,16 @@
 import { useState, useEffect, useRef, lazy, Suspense, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import client from "../api/client";
 
 const MapView = lazy(() => import("../components/MapView"));
 
 const statusMeta = {
   confirmed:        { label: "Confirmed",        icon: "📋", color: "text-amber-400",   ring: "ring-amber-400/30",   glow: "bg-amber-400" },
-  agent_assigned:   { label: "Agent Assigned",   icon: "👤", color: "text-blue-400",    ring: "ring-blue-400/30",    glow: "bg-blue-400" },
+  agent_assigned:   { label: "Agent Assigned",   icon: "👤", color: "text-sky-400",     ring: "ring-sky-400/30",     glow: "bg-sky-400" },
   picked_up:        { label: "Picked Up",        icon: "📤", color: "text-violet-400",  ring: "ring-violet-400/30",  glow: "bg-violet-400" },
   in_transit:       { label: "In Transit",       icon: "🚚", color: "text-indigo-400",  ring: "ring-indigo-400/30",  glow: "bg-indigo-400" },
   out_for_delivery: { label: "Out for Delivery", icon: "🛵", color: "text-orange-400",  ring: "ring-orange-400/30",  glow: "bg-orange-400" },
-  delivered:        { label: "Delivered",        icon: "✅", color: "text-emerald-400", ring: "ring-emerald-400/30", glow: "bg-emerald-400" },
+  delivered:        { label: "Delivered",        icon: "✅", color: "text-brand",       ring: "ring-brand/30",       glow: "bg-brand" },
   failed:           { label: "Failed",           icon: "❌", color: "text-red-400",     ring: "ring-red-400/30",     glow: "bg-red-400" },
   rescheduled:      { label: "Rescheduled",      icon: "🔄", color: "text-gray-400",    ring: "ring-gray-400/30",    glow: "bg-gray-400" },
 };
@@ -21,12 +21,32 @@ const ACTIVE_STATUSES = ["agent_assigned","picked_up","in_transit","out_for_deli
 export default function OrderTracking() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const locationRoute = useLocation();
   const [order, setOrder]       = useState(null);
   const [agentPos, setAgentPos] = useState(null);
   const [agentName, setAgentName] = useState(null);
   const [loading, setLoading]   = useState(true);
+  const [eta, setEta]           = useState(null);   // { distanceKm, durationMin }
+  const [confirmingPay, setConfirmingPay] = useState(false);
   const pollRef = useRef(null);
   const orderPollRef = useRef(null);
+
+  // Returning from Stripe Checkout (?paid=1&session_id=...) → confirm the payment
+  useEffect(() => {
+    const params = new URLSearchParams(locationRoute.search);
+    if (params.get("paid") === "1" && params.get("session_id")) {
+      setConfirmingPay(true);
+      client.post("/payments/confirm", { order_id: id, session_id: params.get("session_id") })
+        .catch(() => {})
+        .finally(() => {
+          setConfirmingPay(false);
+          fetchOrder();
+          // Strip the query params so a refresh doesn't re-confirm
+          navigate(`/orders/${id}`, { replace: true });
+        });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchOrder = async () => {
     try {
@@ -75,28 +95,37 @@ export default function OrderTracking() {
   }, [order?.status]);
 
   if (loading) return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+    <div className="min-h-screen bg-black flex items-center justify-center">
       <div className="text-center">
-        <div className="w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+        <div className="w-10 h-10 border-2 border-brand border-t-transparent rounded-full animate-spin mx-auto mb-4" />
         <p className="text-gray-400 text-sm">Loading order…</p>
       </div>
     </div>
   );
 
   if (!order) return (
-    <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center gap-4">
+    <div className="min-h-screen bg-black flex flex-col items-center justify-center gap-4">
       <p className="text-gray-400">Order not found.</p>
-      <button onClick={() => navigate("/dashboard")} className="text-blue-400 hover:text-blue-300 text-sm underline">← Dashboard</button>
+      <button onClick={() => navigate("/dashboard")} className="text-brand hover:text-brand-hover text-sm underline">← Dashboard</button>
     </div>
   );
 
   const meta = statusMeta[order.status] || statusMeta.confirmed;
   const step = STATUS_STEPS.indexOf(order.status);
 
+  const paymentMeta = order.payment_type === "COD"
+    ? { label: "Cash on Delivery", cls: "text-amber-400 bg-amber-400/10" }
+    : order.payment_status === "paid"
+    ? { label: "Paid", cls: "text-brand bg-brand/10" }
+    : order.payment_status === "refunded"
+    ? { label: "Refunded", cls: "text-sky-400 bg-sky-400/10" }
+    : { label: "Payment pending", cls: "text-gray-400 bg-white/5" };
+  const isActive = ["agent_assigned","picked_up","in_transit","out_for_delivery"].includes(order.status);
+
   return (
-    <div className="min-h-screen bg-gray-950">
+    <div className="min-h-screen bg-black">
       {/* Top bar */}
-      <div className="border-b border-gray-800 bg-gray-900 px-6 py-4 flex items-center justify-between sticky top-0 z-20">
+      <div className="border-b border-white/[0.08] bg-ink px-6 py-4 flex items-center justify-between sticky top-0 z-20">
         <button onClick={() => navigate("/dashboard")}
           className="flex items-center gap-2 text-gray-400 hover:text-white text-sm transition">
           ← Dashboard
@@ -106,12 +135,20 @@ export default function OrderTracking() {
           <span className="text-gray-300 text-sm font-mono">{String(id).slice(0,8)}…</span>
         </div>
         {agentPos && (
-          <div className="flex items-center gap-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold px-3 py-1.5 rounded-full">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <div className="flex items-center gap-2 bg-brand/10 text-brand border border-brand/20 text-xs font-semibold px-3 py-1.5 rounded-full">
+            <span className="w-2 h-2 rounded-full bg-brand animate-pulse" />
             LIVE TRACKING
           </div>
         )}
       </div>
+
+      {/* Confirming Stripe payment */}
+      {confirmingPay && (
+        <div className="bg-brand/10 border-b border-brand/20 text-brand px-6 py-3 flex items-center gap-2 text-sm">
+          <span className="w-3.5 h-3.5 border-2 border-brand border-t-transparent rounded-full animate-spin" />
+          Confirming your payment…
+        </div>
+      )}
 
       {/* Failure banner */}
       {showFailBanner && (
@@ -131,9 +168,9 @@ export default function OrderTracking() {
         {/* Left column */}
         <div className="lg:col-span-3 space-y-5">
           {/* Status card */}
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+          <div className="card p-6">
             <div className="flex items-center gap-4">
-              <div className={`w-14 h-14 rounded-2xl bg-gray-800 ring-2 ${meta.ring} flex items-center justify-center text-2xl`}>
+              <div className={`w-14 h-14 rounded-2xl bg-white/5 ring-2 ${meta.ring} flex items-center justify-center text-2xl`}>
                 {meta.icon}
               </div>
               <div>
@@ -148,7 +185,7 @@ export default function OrderTracking() {
               <div className="mt-6">
                 <div className="flex gap-1.5">
                   {STATUS_STEPS.map((_, i) => (
-                    <div key={i} className={`h-1.5 rounded-full flex-1 transition-all duration-500 ${i <= step ? `${meta.glow} opacity-80` : "bg-gray-700"}`} />
+                    <div key={i} className={`h-1.5 rounded-full flex-1 transition-all duration-500 ${i <= step ? `${meta.glow} opacity-80` : "bg-white/10"}`} />
                   ))}
                 </div>
                 <div className="flex justify-between text-xs text-gray-600 mt-2">
@@ -156,14 +193,26 @@ export default function OrderTracking() {
                 </div>
               </div>
             )}
+
+            {isActive && eta && (
+              <div className="mt-5 flex items-center gap-2 bg-white/5 rounded-xl px-4 py-3">
+                <span className="text-lg">🛣️</span>
+                <div>
+                  <p className="text-white text-sm font-semibold">
+                    ETA ~{Math.max(1, Math.round(eta.durationMin))} min
+                  </p>
+                  <p className="text-gray-500 text-xs">{eta.distanceKm.toFixed(1)} km by road to the doorstep</p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Agent card */}
           {order.agent_id && (
-            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-              <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-4">Your Delivery Agent</p>
+            <div className="card p-5">
+              <p className="eyebrow mb-4">Your Delivery Agent</p>
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-xl flex-shrink-0">
+                <div className="w-12 h-12 rounded-xl bg-brand flex items-center justify-center text-xl flex-shrink-0">
                   👤
                 </div>
                 <div className="flex-1">
@@ -171,7 +220,7 @@ export default function OrderTracking() {
                     {agentName || "Agent Assigned"}
                   </p>
                   {agentPos
-                    ? <p className="text-emerald-400 text-xs mt-0.5 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse inline-block" /> Location updating live</p>
+                    ? <p className="text-brand text-xs mt-0.5 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-brand rounded-full animate-pulse inline-block" /> Location updating live</p>
                     : <p className="text-gray-500 text-xs mt-0.5">Live tracking begins after pickup</p>
                   }
                 </div>
@@ -180,8 +229,8 @@ export default function OrderTracking() {
           )}
 
           {/* Order details */}
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-            <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-4">Order Details</p>
+          <div className="card p-5">
+            <p className="eyebrow mb-4">Order Details</p>
             <div className="grid grid-cols-2 gap-4">
               {[
                 { label: "Order Type",    value: order.order_type },
@@ -189,21 +238,31 @@ export default function OrderTracking() {
                 { label: "Billed Weight", value: `${order.billed_weight_kg} kg` },
                 { label: "Base Charge",   value: `₹${order.base_charge}` },
               ].map(d => (
-                <div key={d.label} className="bg-gray-800/50 rounded-xl p-3">
+                <div key={d.label} className="bg-white/5 rounded-xl p-3">
                   <p className="text-gray-500 text-xs">{d.label}</p>
                   <p className="text-white font-semibold text-sm mt-1">{d.value}</p>
                 </div>
               ))}
             </div>
-            <div className="mt-3 bg-blue-600/10 border border-blue-500/20 rounded-xl p-4 flex justify-between items-center">
-              <span className="text-gray-300 font-medium">Total Charge</span>
-              <span className="text-2xl font-bold text-blue-400">₹{order.total_charge}</span>
+            <div className="mt-3 bg-brand/10 border border-brand/20 rounded-xl p-4 flex justify-between items-center">
+              <div>
+                <span className="text-gray-300 font-medium">Total Charge</span>
+                <span className={`ml-3 text-xs font-semibold px-2.5 py-1 rounded-full ${paymentMeta.cls}`}>
+                  {paymentMeta.label}
+                </span>
+              </div>
+              <span className="text-2xl font-bold text-brand">₹{order.total_charge}</span>
             </div>
+            {order.payment_status === "refunded" && (
+              <p className="text-sky-400 text-xs mt-2 flex items-center gap-1.5">
+                <span>↩</span> Payment refunded after the failed delivery attempt.
+              </p>
+            )}
           </div>
 
           {/* Timeline */}
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-            <p className="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-5">Timeline</p>
+          <div className="card p-5">
+            <p className="eyebrow mb-5">Timeline</p>
             <div className="space-y-5">
               {order.tracking_events.map((ev, i) => {
                 const evMeta = statusMeta[ev.status] || {};
@@ -211,17 +270,17 @@ export default function OrderTracking() {
                 return (
                   <div key={ev.id} className="flex gap-4 items-start">
                     <div className="flex flex-col items-center">
-                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0 ${isLatest ? "bg-blue-600 ring-2 ring-blue-500/30" : "bg-gray-800"}`}>
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0 ${isLatest ? "bg-brand ring-2 ring-brand/30" : "bg-white/5"}`}>
                         {evMeta.icon || "📍"}
                       </div>
-                      {i < order.tracking_events.length - 1 && <div className="w-px h-6 bg-gray-700 mt-1" />}
+                      {i < order.tracking_events.length - 1 && <div className="w-px h-6 bg-white/10 mt-1" />}
                     </div>
                     <div className="flex-1 pb-1">
                       <p className={`font-semibold text-sm capitalize ${isLatest ? "text-white" : "text-gray-300"}`}>
                         {ev.status.replace(/_/g, " ")}
                       </p>
                       <p className="text-gray-500 text-xs mt-0.5">{new Date(ev.created_at).toLocaleString()}</p>
-                      {ev.note && <p className="text-gray-400 text-xs italic mt-1 bg-gray-800 rounded-lg px-2 py-1 inline-block">{ev.note}</p>}
+                      {ev.note && <p className="text-gray-400 text-xs italic mt-1 bg-white/5 rounded-lg px-2 py-1 inline-block">{ev.note}</p>}
                     </div>
                   </div>
                 );
@@ -229,14 +288,43 @@ export default function OrderTracking() {
             </div>
           </div>
 
+          {/* Proof of Delivery */}
+          {order.status === "delivered" && (order.pod_photo || order.pod_signature) && (
+            <div className="card p-5">
+              <div className="flex items-center justify-between mb-4">
+                <p className="eyebrow">Proof of Delivery</p>
+                {order.delivered_at && (
+                  <span className="text-gray-500 text-xs">{new Date(order.delivered_at).toLocaleString()}</span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {order.pod_photo && (
+                  <div>
+                    <p className="text-gray-500 text-xs mb-1.5">Delivery photo</p>
+                    <img src={order.pod_photo} alt="Proof of delivery"
+                      className="w-full h-40 object-cover rounded-xl border border-white/10" />
+                  </div>
+                )}
+                {order.pod_signature && (
+                  <div>
+                    <p className="text-gray-500 text-xs mb-1.5">Signature</p>
+                    <img src={order.pod_signature} alt="Recipient signature"
+                      className="w-full h-40 object-contain rounded-xl border border-white/10 bg-white" />
+                  </div>
+                )}
+              </div>
+              {order.pod_note && <p className="text-gray-400 text-sm mt-3 italic">"{order.pod_note}"</p>}
+            </div>
+          )}
+
           {/* Delivered */}
           {order.status === "delivered" && (
-            <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-2xl p-8 text-center">
+            <div className="bg-brand/10 border border-brand/30 rounded-2xl p-8 text-center">
               <p className="text-5xl mb-3">🎉</p>
-              <p className="text-emerald-400 font-bold text-xl">Delivered Successfully!</p>
+              <p className="text-brand font-bold text-xl">Delivered Successfully!</p>
               <p className="text-gray-400 text-sm mt-2">Your package has been delivered.</p>
               <button onClick={() => navigate("/dashboard")}
-                className="mt-5 bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 rounded-xl font-semibold transition text-sm">
+                className="btn-accent mt-5 px-8 py-3 text-sm">
                 Back to Dashboard
               </button>
             </div>
@@ -246,13 +334,14 @@ export default function OrderTracking() {
         {/* Right: map */}
         <div className="lg:col-span-2">
           <div className="sticky top-24">
-            <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden" style={{ height: "480px" }}>
+            <div className="card overflow-hidden" style={{ height: "480px" }}>
               {order.pickup_lat ? (
                 <Suspense fallback={<div className="h-full flex items-center justify-center text-gray-500 text-sm">Loading map…</div>}>
                   <MapView
                     pickup={[order.pickup_lat, order.pickup_lng]}
                     drop={[order.drop_lat, order.drop_lng]}
                     agent={agentPos}
+                    onRoute={setEta}
                   />
                 </Suspense>
               ) : (
@@ -263,9 +352,9 @@ export default function OrderTracking() {
               )}
             </div>
             {agentPos && (
-              <div className="mt-3 bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between text-xs">
+              <div className="mt-3 card p-3 flex items-center justify-between text-xs">
                 <span className="text-gray-400 flex items-center gap-1.5">
-                  <span className="w-2 h-2 bg-blue-400 rounded-full" /> Agent location
+                  <span className="w-2 h-2 bg-brand rounded-full" /> Agent location
                 </span>
                 <span className="text-gray-500">Updates every 5s</span>
               </div>

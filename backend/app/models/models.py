@@ -110,6 +110,17 @@ class Order(Base):
     cod_surcharge = Column(Numeric(10, 2), default=0)
     total_charge = Column(Numeric(10, 2), nullable=True)
 
+    # Payment (Stripe test mode). payment_status: unpaid | paid | refunded | failed
+    payment_status = Column(String, nullable=False, default="unpaid")
+    payment_ref = Column(String, nullable=True)   # Stripe PaymentIntent / Checkout Session id
+    refunded_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+    # Proof of Delivery
+    pod_photo = Column(Text, nullable=True)        # data URL (base64) of delivery photo
+    pod_signature = Column(Text, nullable=True)    # data URL (base64) of signature
+    pod_note = Column(Text, nullable=True)
+    delivered_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
     status = Column(
         SAEnum(
             "pending", "confirmed", "agent_assigned", "picked_up",

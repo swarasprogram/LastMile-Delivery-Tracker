@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 
-export default function AddressAutocomplete({ placeholder, onSelect }) {
+export default function AddressAutocomplete({ placeholder, onSelect, className = "" }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -48,7 +48,7 @@ export default function AddressAutocomplete({ placeholder, onSelect }) {
   return (
     <div className="relative">
       <input
-        className="w-full border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-300 outline-none"
+        className={`field ${className}`}
         placeholder={placeholder}
         value={query}
         onChange={e => search(e.target.value)}
@@ -57,19 +57,19 @@ export default function AddressAutocomplete({ placeholder, onSelect }) {
         autoComplete="off"
       />
       {loading && (
-        <span className="absolute right-3 top-3.5 text-xs text-slate-400 animate-pulse">Searching…</span>
+        <span className="absolute right-3 top-3.5 text-xs text-brand animate-pulse">Searching…</span>
       )}
       {show && results.length > 0 && (
-        <div className="absolute z-[999] w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+        <div className="absolute z-[999] w-full mt-2 bg-ink-raised border border-white/10 rounded-xl shadow-2xl shadow-black/60 overflow-hidden">
           {results.map((f, i) => (
             <div key={i} onMouseDown={() => select(f)}
-              className="px-4 py-3 cursor-pointer hover:bg-blue-50 border-b border-slate-50 last:border-0 flex gap-3 items-start">
-              <span className="text-slate-400 mt-0.5 flex-shrink-0">📍</span>
+              className="px-4 py-3 cursor-pointer hover:bg-white/5 border-b border-white/[0.06] last:border-0 flex gap-3 items-start transition-colors">
+              <span className="text-brand mt-0.5 flex-shrink-0">📍</span>
               <div className="min-w-0">
-                <p className="text-sm font-medium text-slate-800 truncate">
+                <p className="text-sm font-medium text-white truncate">
                   {f.properties.name || f.properties.street || "Unnamed place"}
                 </p>
-                <p className="text-xs text-slate-400 truncate">
+                <p className="text-xs text-gray-500 truncate">
                   {[f.properties.city || f.properties.town, f.properties.state, f.properties.country].filter(Boolean).join(", ")}
                 </p>
               </div>

@@ -7,6 +7,10 @@ PROXIMITY_WEIGHT = 0.5
 WORKLOAD_WEIGHT = 0.3
 SUCCESS_WEIGHT = 0.2
 
+# Agents without a live GPS fix are still assignable — they just get a neutral
+# proximity score so distance can't be the sole deciding factor.
+NEUTRAL_PROXIMITY = 0.5
+
 ACTIVE_STATUSES = {"confirmed", "agent_assigned", "picked_up", "in_transit", "out_for_delivery"}
 
 
@@ -32,37 +36,55 @@ async def find_best_agent(pickup_lat: float, pickup_lng: float, db: AsyncSession
     """
     Returns (User, score, breakdown) for the best available agent,
     or (None, 0, {}) if no agents are available.
-    """
-    # Fetch all available agents with a location
-    profile_result = await db.execute(
-        select(AgentProfile, User)
-        .join(User, User.id == AgentProfile.user_id)
-        .where(
-            AgentProfile.is_available == True,
-            AgentProfile.current_lat.isnot(None),
-            AgentProfile.current_lng.isnot(None),
-        )
-    )
-    rows = profile_result.all()
 
-    if not rows:
+    Every agent whose profile is available is a candidate — a live GPS location
+    is used for proximity scoring when present, but is NOT required. This is what
+    lets the load spread across the whole fleet instead of collapsing onto the one
+    agent who happens to have shared their location.
+    """
+    # LEFT JOIN so agents that have no profile row yet are still considered.
+    result = await db.execute(
+        select(User, AgentProfile)
+        .outerjoin(AgentProfile, AgentProfile.user_id == User.id)
+        .where(User.role == "agent")
+    )
+    rows = result.all()
+
+    # Available = no profile yet, or profile explicitly available.
+    candidates = [
+        (user, profile)
+        for user, profile in rows
+        if profile is None or profile.is_available is not False
+    ]
+    if not candidates:
         return None, 0.0, {}
 
-    agent_profiles = [(profile, user) for profile, user in rows]
+    # --- Proximity: real distance where we have a location, else neutral ---
+    raw_distances = []          # None when the agent has no live fix
+    for _, profile in candidates:
+        if profile is not None and profile.current_lat is not None and profile.current_lng is not None:
+            raw_distances.append(
+                haversine_km(pickup_lat, pickup_lng, float(profile.current_lat), float(profile.current_lng))
+            )
+        else:
+            raw_distances.append(None)
 
-    # --- Proximity score ---
-    distances = [
-        haversine_km(pickup_lat, pickup_lng, p.current_lat, p.current_lng)
-        for p, _ in agent_profiles
-    ]
-    prox_scores = _normalize_inverse(distances)
+    known = [d for d in raw_distances if d is not None]
+    max_known = max(known) if known else 0
+    prox_scores = []
+    for d in raw_distances:
+        if d is None:
+            prox_scores.append(NEUTRAL_PROXIMITY)
+        elif max_known:
+            prox_scores.append(1 - (d / max_known))
+        else:
+            prox_scores.append(1.0)  # only agent(s), all at same/zero distance
 
-    # --- Workload score (count active orders per agent) ---
+    # --- Workload score (fewer active orders → higher score) ---
     workloads = []
-    for _, user in agent_profiles:
+    for user, _ in candidates:
         count_result = await db.execute(
-            select(func.count(Order.id))
-            .where(
+            select(func.count(Order.id)).where(
                 Order.agent_id == user.id,
                 Order.status.in_(ACTIVE_STATUSES),
             )
@@ -72,20 +94,21 @@ async def find_best_agent(pickup_lat: float, pickup_lng: float, db: AsyncSession
 
     # --- Success rate score ---
     success_scores = []
-    for profile, _ in agent_profiles:
-        rate = float(profile.success_rate) if profile.success_rate is not None else 0.5
-        success_scores.append(rate)
+    for _, profile in candidates:
+        rate = float(profile.success_rate) / 100.0 if (profile and profile.success_rate is not None) else 0.5
+        success_scores.append(max(0.0, min(1.0, rate)))
 
     # --- Composite score ---
     scored = []
-    for i, (profile, user) in enumerate(agent_profiles):
+    for i, (user, _) in enumerate(candidates):
         score = (
             PROXIMITY_WEIGHT * prox_scores[i]
             + WORKLOAD_WEIGHT * workload_scores[i]
             + SUCCESS_WEIGHT * success_scores[i]
         )
         breakdown = {
-            "distance_km": round(distances[i], 2),
+            "distance_km": round(raw_distances[i], 2) if raw_distances[i] is not None else 0.0,
+            "has_live_location": raw_distances[i] is not None,
             "proximity_score": round(prox_scores[i], 3),
             "active_orders": workloads[i],
             "workload_score": round(workload_scores[i], 3),
@@ -94,5 +117,6 @@ async def find_best_agent(pickup_lat: float, pickup_lng: float, db: AsyncSession
         }
         scored.append((user, score, breakdown))
 
-    scored.sort(key=lambda x: x[1], reverse=True)
+    # Highest composite wins; break ties by fewest active orders for fair spread.
+    scored.sort(key=lambda x: (x[1], -x[2]["active_orders"]), reverse=True)
     return scored[0]

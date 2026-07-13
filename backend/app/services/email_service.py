@@ -21,18 +21,18 @@ async def send_failure_email(customer_email: str, customer_name: str, order_id: 
           <p style="margin:0 0 8px;color:#374151"><strong>🏠 To:</strong> {drop}</p>
           {f'<p style="margin:0;color:#6B7280"><strong>Reason:</strong> {note}</p>' if note else ''}
         </div>
-        <p style="color:#6B7280">You can reschedule your delivery from the tracking page.</p>
-        <a href="http://localhost:5174/orders/{order_id}"
-           style="display:inline-block;background:#2563EB;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">
+        <p style="color:#6B7280">If you paid online, your amount has been refunded. You can reschedule your delivery from the tracking page.</p>
+        <a href="{settings.FRONTEND_URL}/orders/{order_id}"
+           style="display:inline-block;background:#111111;color:#A3E635;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">
           Reschedule Delivery →
         </a>
-        <p style="color:#9CA3AF;font-size:12px;margin-top:24px">Last-Mile Delivery Tracker · Automated notification</p>
+        <p style="color:#9CA3AF;font-size:12px;margin-top:24px">Trace · Last-Mile Delivery · Automated notification</p>
       </div>
     </div>
     """
  
     payload = {
-        "sender": {"name": "Last-Mile Tracker", "email": settings.SENDER_EMAIL},
+        "sender": {"name": "Trace", "email": settings.SENDER_EMAIL},
         "to": [{"email": customer_email, "name": customer_name}],
         "subject": "⚠️ Your delivery attempt failed – Reschedule now",
         "htmlContent": html,

@@ -13,7 +13,7 @@ from app.schemas.schemas import (
     OrderEstimateRequest, OrderEstimateResponse,
     OrderCreateRequest, OrderOut,
     StatusUpdateRequest, RescheduleRequest,
-    AssignmentResult,
+    AssignmentResult, ManualAssignRequest,
 )
 
 router = APIRouter()
@@ -241,10 +241,32 @@ async def update_status(
         )
 
     order.status = payload.status
+
+    # Proof of Delivery + delivered timestamp
+    if payload.status == "delivered":
+        order.delivered_at = datetime.utcnow()
+        if payload.pod_photo:     order.pod_photo = payload.pod_photo
+        if payload.pod_signature: order.pod_signature = payload.pod_signature
+        if payload.pod_note:      order.pod_note = payload.pod_note
+
     await _log_event(db, order.id, payload.status, current_user, payload.note)
 
-    # Send failure email to customer
+    # Failed delivery: refund prepaid payment + notify customer
     if payload.status == "failed":
+        # Auto-refund a prepaid order that was actually paid
+        if order.payment_type == "Prepaid" and order.payment_status == "paid" and order.payment_ref:
+            try:
+                from app.services.payment_service import refund_payment
+                refund_payment(order.payment_ref)
+                order.payment_status = "refunded"
+                order.refunded_at = datetime.utcnow()
+                await _log_event(
+                    db, order.id, "failed", current_user,
+                    f"₹{order.total_charge} refunded to customer via Stripe",
+                )
+            except Exception:
+                pass  # Never block status update if the refund call fails
+
         try:
             from app.services.email_service import send_failure_email
             customer_result = await db.execute(select(User).where(User.id == order.customer_id))
@@ -350,6 +372,72 @@ async def auto_assign(
         active_orders=breakdown["active_orders"],
         success_rate=breakdown["success_rate"],
         composite_score=breakdown["composite_score"],
+    )
+
+
+@router.post("/{order_id}/assign-manual", response_model=AssignmentResult)
+async def manual_assign(
+    order_id: str,
+    payload: ManualAssignRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Admin manually assigns (or reassigns) an order to a specific agent."""
+    result = await db.execute(
+        select(Order).where(Order.id == order_id).options(selectinload(Order.tracking_events))
+    )
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.status in ("delivered", "failed"):
+        raise HTTPException(status_code=400, detail=f"Cannot reassign a {order.status} order")
+
+    # Validate the target agent
+    agent_result = await db.execute(
+        select(User).where(User.id == payload.agent_id, User.role == "agent")
+    )
+    agent = agent_result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    is_reassign = order.agent_id is not None and str(order.agent_id) != str(agent.id)
+    order.agent_id = agent.id
+    # A confirmed/rescheduled order advances to agent_assigned; an already
+    # in-flight order keeps its status but changes hands.
+    if order.status in ("confirmed", "rescheduled"):
+        order.status = "agent_assigned"
+
+    verb = "Reassigned" if is_reassign else "Manually assigned"
+    await _log_event(db, order.id, order.status, current_user, f"{verb} to {agent.name}")
+    await db.commit()
+
+    # Best-effort proximity/workload readout for the response
+    from app.services.auto_assign import haversine_km, ACTIVE_STATUSES
+    from app.models.models import AgentProfile
+    from sqlalchemy import func
+
+    prof_res = await db.execute(select(AgentProfile).where(AgentProfile.user_id == agent.id))
+    profile = prof_res.scalar_one_or_none()
+    distance_km = 0.0
+    if profile and profile.current_lat and order.pickup_lat:
+        distance_km = round(haversine_km(
+            float(order.pickup_lat), float(order.pickup_lng),
+            float(profile.current_lat), float(profile.current_lng),
+        ), 2)
+    active_res = await db.execute(
+        select(func.count(Order.id)).where(
+            Order.agent_id == agent.id, Order.status.in_(ACTIVE_STATUSES)
+        )
+    )
+    return AssignmentResult(
+        order_id=order.id,
+        assigned_agent_id=agent.id,
+        agent_name=agent.name,
+        distance_km=distance_km,
+        active_orders=active_res.scalar() or 0,
+        success_rate=float(profile.success_rate) / 100.0 if (profile and profile.success_rate) else 1.0,
+        composite_score=1.0,
     )
 
 
